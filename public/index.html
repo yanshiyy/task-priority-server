@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="任务优先级">
+  <title>任务优先级决策器</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 登录界面 -->
+  <div class="login" id="login-view">
+    <div class="login-card">
+      <div class="login-logo">🗂️</div>
+      <h1>任务优先级决策器</h1>
+      <p class="login-sub">多账户版 · 请使用分配的账户登录</p>
+      <input type="text" id="login-user" placeholder="账户名" autocomplete="username">
+      <input type="password" id="login-pass" placeholder="密码" autocomplete="current-password">
+      <div class="login-error" id="login-error" hidden></div>
+      <button class="btn primary login-btn" id="btn-login">登 录</button>
+      <p class="login-hint">账户由管理员分配；首次登录后请及时修改密码。</p>
+    </div>
+  </div>
+
+  <div class="app" id="app" hidden>
+    <!-- 顶部栏 -->
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1>任务优先级决策器</h1>
+        <p class="subtitle">P = 重要度 × 紧急度 · 难度作并列修正</p>
+      </div>
+      <div class="topbar-right">
+        <span class="user-tag" id="user-tag"></span>
+        <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
+        <button id="btn-logout" class="icon-btn" title="退出登录">⎋</button>
+      </div>
+    </header>
+
+    <!-- 统计条 -->
+    <section class="stats" id="stats" hidden>
+      <div class="stat"><b id="st-total">0</b><span>待办</span></div>
+      <div class="stat today"><b id="st-today">0</b><span>今天必做</span></div>
+      <div class="stat"><b id="st-week">0</b><span>本周安排</span></div>
+      <div class="stat"><b id="st-load">0h</b><span>必做耗时</span></div>
+    </section>
+
+    <!-- 筛选标签 -->
+    <nav class="tabs" id="tabs"></nav>
+
+    <!-- 任务列表 -->
+    <main class="list" id="list"></main>
+
+    <!-- 空状态 -->
+    <div class="empty" id="empty" hidden>
+      <div class="empty-icon">🗂️</div>
+      <p>暂无任务</p>
+      <button class="btn primary" id="btn-empty-add">＋ 添加第一个任务</button>
+    </div>
+
+    <!-- 悬浮添加按钮 -->
+    <button class="fab" id="btn-add" title="添加任务">＋</button>
+
+    <!-- 页脚：开发者信息 -->
+    <footer class="app-footer">
+      <span>开发人：郝岩嵌</span>
+      <a href="mailto:yanshiyy@hotmail.com">yanshiyy@hotmail.com</a>
+    </footer>
+  </div>
+
+  <!-- 任务编辑抽屉 -->
+  <div class="sheet-mask" id="mask-edit" hidden>
+    <form class="sheet" id="form-edit">
+      <div class="sheet-head">
+        <h2 id="edit-title">添加任务</h2>
+        <button type="button" class="icon-btn" data-close="mask-edit">✕</button>
+      </div>
+      <div class="sheet-body">
+        <label class="field">
+          <span class="field-label">任务名称 *</span>
+          <input type="text" id="f-title" maxlength="60" placeholder="要做什么？" required>
+        </label>
+
+        <div class="field">
+          <span class="field-label">重要度（a）<b class="val" id="f-a-val">—</b></span>
+          <select id="f-a"></select>
+        </div>
+
+        <div class="field">
+          <span class="field-label">紧急度（c）<b class="val" id="f-c-val">—</b></span>
+          <div class="seg" id="f-cmode">
+            <button type="button" data-cmode="due" class="on">按截止日期</button>
+            <button type="button" data-cmode="manual">手动选档</button>
+          </div>
+          <div id="f-due-wrap" class="due-wrap">
+            <input type="date" id="f-due">
+            <span class="hint" id="f-due-hint"></span>
+          </div>
+          <select id="f-cmanual" hidden></select>
+        </div>
+
+        <div class="field">
+          <span class="field-label">难易度（b）<b class="val" id="f-b-val">—</b></span>
+          <input type="range" id="f-b" min="1" max="10" step="1" value="5">
+          <div class="range-ends"><span>困难 · 档位1</span><span>容易 · 档位10</span></div>
+          <span class="hint">难度不参与 P 分数计算；当两项任务 P 相同或相差 ≤10 分时，容易的排前（在设置中可关闭）。</span>
+          <div class="chips" id="f-b-anchors"></div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <span class="field-label">预计耗时</span>
+            <div class="inline">
+              <input type="number" id="f-est" min="0" max="999" step="1" placeholder="0">
+              <select id="f-est-unit">
+                <option value="1">分钟</option>
+                <option value="60" selected>小时</option>
+                <option value="480">天(8h)</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label">状态</span>
+            <select id="f-status">
+              <option value="todo">待办</option>
+              <option value="doing">进行中</option>
+              <option value="blocked">阻塞（等别人/等条件）</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">委托给（可选）</span>
+          <input type="text" id="f-assignee" maxlength="20" placeholder="交给谁做">
+        </label>
+
+        <label class="field">
+          <span class="field-label">备注（可选）</span>
+          <textarea id="f-note" rows="2" maxlength="200" placeholder="补充说明"></textarea>
+        </label>
+
+        <div class="score-preview" id="f-preview" hidden>
+          <span id="f-preview-p">P = 0</span>
+          <span id="f-preview-d">—</span>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button type="submit" class="btn primary grow">保存</button>
+      </div>
+      <input type="hidden" id="f-id">
+    </form>
+  </div>
+
+  <!-- 设置抽屉 -->
+  <div class="sheet-mask" id="mask-settings" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>设置</h2>
+        <button type="button" class="icon-btn" data-close="mask-settings">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">紧急度衰减常数 τ（天）<b class="val" id="s-tau-val">7</b></span>
+          <input type="range" id="s-tau" min="1" max="30" step="1" value="7">
+          <span class="hint">c = 1 + 9·e^(−d/τ)，τ 越小越"急脾气"。剩 τ 天时 c≈4.3。</span>
+        </div>
+        <div class="field">
+          <span class="field-label">决策阈值（P 分界）</span>
+          <div class="inline">
+            <label>今天必做 ≥ <input type="number" id="s-must" min="0" max="100" step="1"></label>
+            <label>本周 ≥ <input type="number" id="s-week" min="0" max="100" step="1"></label>
+            <label>排期 ≥ <input type="number" id="s-sched" min="0" max="100" step="1"></label>
+          </div>
+        </div>
+        <div class="field switch">
+          <span class="field-label">先易后难修正
+            <span class="hint">相邻两任务 P 相差 ≤10 分时，更容易的排前（快速取胜）。</span>
+          </span>
+          <input type="checkbox" id="s-easy">
+        </div>
+        <div class="field">
+          <span class="field-label">账户与密码</span>
+          <div class="account-row">
+            <span class="account-info" id="account-info"></span>
+            <button type="button" class="btn" id="btn-change-pw">修改密码</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">数据</span>
+          <div class="btn-row">
+            <button type="button" class="btn" id="btn-export">导出备份</button>
+            <button type="button" class="btn" id="btn-import">导入备份</button>
+            <input type="file" id="file-import" accept=".json,application/json" hidden>
+            <button type="button" class="btn" id="btn-demo">载入示例</button>
+            <button type="button" class="btn danger" id="btn-clear">清空数据</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">模型说明</span>
+          <div class="model-note">
+            <p>① 每项任务按 <b>重要度 a</b>、<b>难易度 b</b>、<b>紧急度 c</b>（1–10）打分。</p>
+            <p>② 核心优先度 <b>P = a × c</b>（乘积型，贴合四象限）。</p>
+            <p>③ 难度不参与加分：只在 P 相差 ≤10 分时"先易后难"，并列时更容易者优先。</p>
+            <p>④ 紧急度支持截止日期连续衰减：<b>c = 1 + 9·e^(−d/τ)</b>，逾期自动满分。</p>
+            <p>⑤ 决策：P≥<b id="n-must">80</b> 今天必做；P≥<b id="n-week">50</b> 本周安排；P≥<b id="n-sched">20</b> 排期/委托；更低且不重要 → 不做/删除；重要但不急 → 排期。</p>
+            <p>⑥ 并列规则链：P 相同 → 更急 → 更重要 → 更容易 → 先登记先做。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改密码抽屉 -->
+  <div class="sheet-mask" id="mask-pw" hidden>
+    <form class="sheet" id="form-pw">
+      <div class="sheet-head">
+        <h2>修改密码</h2>
+        <button type="button" class="icon-btn" data-close="mask-pw">✕</button>
+      </div>
+      <div class="sheet-body">
+        <label class="field">
+          <span class="field-label">原密码</span>
+          <input type="password" id="pw-old" autocomplete="current-password">
+        </label>
+        <label class="field">
+          <span class="field-label">新密码（至少 6 位）</span>
+          <input type="password" id="pw-new" autocomplete="new-password" minlength="6">
+        </label>
+        <label class="field">
+          <span class="field-label">确认新密码</span>
+          <input type="password" id="pw-new2" autocomplete="new-password">
+        </label>
+        <div class="login-error" id="pw-error" hidden></div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn" data-close="mask-pw">取消</button>
+        <button type="submit" class="btn primary grow">确认修改</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="scoring.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

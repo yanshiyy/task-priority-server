@@ -1,0 +1,19 @@
+{
+  "name": "task-priority-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "任务优先级决策器 · 多账户服务端（5 账户，SQLite 存储，零第三方依赖）",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "reset-password": "node reset-password.js",
+    "test": "node test/api.test.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "devDependencies": {
+    "@railway/cli": "^5.41.2",
+    "jsdom": "^30.0.1"
+  }
+}
