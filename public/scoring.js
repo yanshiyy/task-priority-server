@@ -203,6 +203,54 @@
     return Math.floor(min / 60) + '小时' + (min % 60) + '分';
   }
 
+  /* ---------- 任务拆分 / 子任务 ----------
+   * 数据约定（兼容无拆分的老数据）：
+   *   - parentId: 子任务挂到父任务的 id；null/缺省 = 顶层任务
+   *   - order:    子任务在父任务下的顺序号（工作流模式按此执行）
+   *   - wf (父任务上): true = 顺序工作流（子任务必须按顺序完成）
+   *                     false/缺省 = 独立子任务（可并行、乱序完成）
+   */
+
+  /** 取某任务的子任务：按 order 升序（order 相同按创建时间），保证确定性 */
+  function childrenOf(tasks, parentId) {
+    return (tasks || []).filter(function (t) { return t.parentId === parentId; })
+      .sort(function (a, b) {
+        return ((a.order || 0) - (b.order || 0)) || ((a.createdAt || 0) - (b.createdAt || 0));
+      });
+  }
+
+  /** 子任务进度统计 */
+  function subtaskStats(children) {
+    var done = 0, blocked = 0, leftMin = 0;
+    (children || []).forEach(function (c) {
+      if (c.status === 'done') { done++; }
+      else if (c.status === 'blocked') { blocked++; }
+      if (c.status !== 'done') { leftMin += (c.estMin || 0); }
+    });
+    return {
+      total: (children || []).length,
+      done: done,
+      blocked: blocked,
+      left: (children || []).length - done,
+      leftMin: leftMin
+    };
+  }
+
+  /** 工作流下一步：按顺序第一个未完成的子任务（children 需已按 order 排好） */
+  function nextOpenSubtask(children) {
+    var list = children || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].status !== 'done') { return list[i]; }
+    }
+    return null;
+  }
+
+  /** 该任务当前是否展示为"已全部子任务完成"（父任务的完成态提示） */
+  function allSubtasksDone(children) {
+    return !!children && children.length > 0 &&
+      children.every(function (c) { return c.status === 'done'; });
+  }
+
   return {
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     IMPORTANCE_RUBRIC: IMPORTANCE_RUBRIC,
@@ -222,6 +270,10 @@
     applyEasyFirst: applyEasyFirst,
     rankTasks: rankTasks,
     mergeSettings: mergeSettings,
-    fmtDuration: fmtDuration
+    fmtDuration: fmtDuration,
+    childrenOf: childrenOf,
+    subtaskStats: subtaskStats,
+    nextOpenSubtask: nextOpenSubtask,
+    allSubtasksDone: allSubtasksDone
   };
 });

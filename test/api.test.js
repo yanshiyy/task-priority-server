@@ -18,7 +18,12 @@ store.createUser('alice', 'alice123');
 store.createUser('bob', 'bob123');
 
 const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-  env: Object.assign({}, process.env, { PORT: String(PORT), DATA_DIR: DATA_DIR, ACCOUNTS: 'alice,bob' }),
+  env: Object.assign({}, process.env, {
+    PORT: String(PORT),
+    DATA_DIR: DATA_DIR,
+    ACCOUNTS: 'alice,bob',
+    ADMIN_KEY: 'test-admin-key'
+  }),
   stdio: ['ignore', 'pipe', 'pipe']
 });
 
@@ -154,6 +159,38 @@ function t(name, fn) { return fn().then(() => { passed++; console.log('  ✓ ' +
       headers: { 'Authorization': 'Bearer ' + aliceToken }
     });
     assert.strictEqual(r.status, 401);
+  });
+
+  await t('管理员接口：无密钥/错误密钥 → 403', async () => {
+    const noKey = await fetch(`http://127.0.0.1:${PORT}/api/admin/accounts`);
+    assert.strictEqual(noKey.status, 403);
+    const badKey = await fetch(`http://127.0.0.1:${PORT}/api/admin/reset-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'wrong', username: 'bob' })
+    });
+    assert.strictEqual(badKey.status, 403);
+  });
+
+  await t('管理员接口：正确密钥重置密码 → 新密码可登录', async () => {
+    const list = await fetch(`http://127.0.0.1:${PORT}/api/admin/accounts`, {
+      headers: { 'x-admin-key': 'test-admin-key' }
+    });
+    const listData = await list.json();
+    assert.deepStrictEqual(listData.accounts.sort(), ['alice', 'bob']);
+
+    const reset = await fetch(`http://127.0.0.1:${PORT}/api/admin/reset-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'test-admin-key', username: 'bob' })
+    });
+    assert.strictEqual(reset.status, 200);
+    const d = await reset.json();
+    assert.ok(d.password && d.password.length >= 8);
+
+    const relog = await fetch(`http://127.0.0.1:${PORT}/api/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'bob', password: d.password })
+    });
+    assert.strictEqual(relog.status, 200);
   });
 
   console.log('\nAPI 集成测试全部通过：' + passed + ' 项');

@@ -11,6 +11,7 @@ var db = require('./db.js');
 
 var PORT = Number(process.env.PORT || 8788);
 var DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+var ADMIN_KEY = process.env.ADMIN_KEY || '';   // 管理员密钥（环境变量配置；为空则管理接口禁用）
 var ACCOUNTS = (process.env.ACCOUNTS || 'user1,user2,user3,user4,user5')
   .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 var PUBLIC_DIR = path.join(__dirname, 'public');
@@ -92,6 +93,27 @@ var server = http.createServer(function (req, res) {
   // ── API ──
   if ((url === '/api/health' || url === '/health') && req.method === 'GET') {
     send(res, 200, { ok: true, accounts: store.listUsers().length });
+    return;
+  }
+
+  // 管理员接口（需 ADMIN_KEY 环境变量，否则 403）
+  if (url === '/api/admin/accounts' && req.method === 'GET') {
+    if (!ADMIN_KEY || (req.headers['x-admin-key'] || '') !== ADMIN_KEY) { send(res, 403, { error: '无权限' }); return; }
+    send(res, 200, { accounts: store.listUsers().map(function (u) { return u.username; }) });
+    return;
+  }
+
+  if (url === '/api/admin/reset-password' && req.method === 'POST') {
+    readBody(req, function (body) {
+      if (!ADMIN_KEY || !body || body.key !== ADMIN_KEY) { send(res, 403, { error: '无权限' }); return; }
+      if (!body.username) { send(res, 400, { error: '缺少用户名' }); return; }
+      var u = store.getUser(body.username);
+      if (!u) { send(res, 404, { error: '账户不存在' }); return; }
+      var pw = auth.randomPassword(10);
+      store.setPassword(u.id, pw);
+      sessions.removeUser(u.id);
+      send(res, 200, { username: u.username, password: pw, message: '密码已重置，请安全分发' });
+    });
     return;
   }
 

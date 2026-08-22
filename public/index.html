@@ -156,6 +156,50 @@
     </form>
   </div>
 
+  <!-- 任务拆分抽屉 -->
+  <div class="sheet-mask" id="mask-split" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2 id="sp-title">拆分任务</h2>
+        <button type="button" class="icon-btn" data-close="mask-split">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">子任务模式</span>
+          <div class="seg" id="sp-mode">
+            <button type="button" data-wf="0">☑ 独立子任务<br><small>可乱序并行</small></button>
+            <button type="button" data-wf="1">➡ 顺序工作流<br><small>按步骤执行</small></button>
+          </div>
+          <span class="hint" id="sp-mode-hint"></span>
+        </div>
+
+        <div class="field">
+          <span class="field-label">子任务列表（<b class="val" id="sp-progress">0/0</b>）</span>
+          <div id="sp-list" class="split-list"></div>
+        </div>
+
+        <form id="form-split-add" class="split-add">
+          <span class="field-label">＋ 添加子任务</span>
+          <input type="text" id="sp-new" maxlength="60" placeholder="子任务名称，如：收集数据">
+          <div class="inline split-inline">
+            <input type="number" id="sp-new-est" min="0" max="999" step="1" placeholder="预计耗时">
+            <select id="sp-new-est-unit">
+              <option value="1">分钟</option>
+              <option value="60" selected>小时</option>
+              <option value="480">天(8h)</option>
+            </select>
+            <input type="text" id="sp-new-assignee" maxlength="20" placeholder="委托给（可选）">
+            <button type="submit" class="btn primary grow">添加</button>
+          </div>
+          <span class="hint">子任务默认继承父任务的重要度、紧急度与截止日期，可在卡片上「编辑」单独调整。</span>
+        </form>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn primary grow" data-close="mask-split">完成</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 设置抽屉 -->
   <div class="sheet-mask" id="mask-settings" hidden>
     <div class="sheet">

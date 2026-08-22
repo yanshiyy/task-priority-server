@@ -92,12 +92,31 @@ async function t(name, fn) { await fn(); passed++; console.log('  ✓ ' + name);
     btns.forEach(b => { if (b.dataset.cmode === 'manual') b.click(); });
     doc.querySelector('#f-cmanual').value = '1';
     doc.querySelector('#f-b').value = '10';
+    doc.querySelector('#f-est').value = '2';        // 2 小时
+    doc.querySelector('#f-est-unit').value = '60';
     doc.querySelector('#form-edit').dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
     await new Promise(r => setTimeout(r, 600));  // 等待防抖保存
     assert.strictEqual(tasks.alice.list.length, 1);
     assert.strictEqual(tasks.alice.list[0].title, '多账户测试任务');
+    assert.strictEqual(tasks.alice.list[0].estMin, 120, '2 小时应存为 120 分钟');
     assert.strictEqual(tasks.alice.rev, 1);
     assert.strictEqual(tasks.bob.list.length, 0, 'bob 数据不受影响');
+  });
+
+  await t('回归[预计耗时回显]: 重新编辑 2 小时任务 → 显示 2 + 小时 而非 120', async () => {
+    doc.querySelectorAll('#tabs .tab').forEach(b => { if (b.textContent.indexOf('全部') === 0) b.click(); });
+    // 找到该任务卡片并点编辑
+    let card = null;
+    doc.querySelectorAll('.card').forEach(c => {
+      if (c.querySelector('.card-title').textContent === '多账户测试任务') card = c;
+    });
+    assert.ok(card, '应找到任务卡片');
+    card.querySelector('.card-actions').querySelectorAll('.mini-btn').forEach(b => {
+      if (b.textContent === '编辑') b.click();
+    });   // 点击"编辑"按钮
+    await new Promise(r => setTimeout(r, 30));
+    assert.strictEqual(doc.querySelector('#f-est').value, '2');
+    assert.strictEqual(doc.querySelector('#f-est-unit').value, '60');
   });
 
   await t('登出 → 回到登录界面', async () => {

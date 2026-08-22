@@ -14,6 +14,7 @@
     settings: M.mergeSettings({}),
     filter: 'all',        // all | today | week | schedule | drop | done | blocked
     editingId: null,
+    splitParentId: null,
     username: '',
     rev: 0,
     saveTimer: null
@@ -87,18 +88,21 @@
   }
 
   /* ---------- 派生 ---------- */
+  function isTopLevel(t) { return !t.parentId; }
+  function childrenOfTask(id) { return M.childrenOf(state.tasks, id); }
+
   function evaluated() {
     return M.rankTasks(state.tasks.filter(function (t) {
-      return t.status === 'todo' || t.status === 'doing';
+      return isTopLevel(t) && (t.status === 'todo' || t.status === 'doing');
     }), state.settings);
   }
   function blockedList() {
-    return state.tasks.filter(function (t) { return t.status === 'blocked'; })
+    return state.tasks.filter(function (t) { return isTopLevel(t) && t.status === 'blocked'; })
       .map(function (t) { return M.evaluate(t, state.settings); })
       .sort(M.compareTasks);
   }
   function doneList() {
-    return state.tasks.filter(function (t) { return t.status === 'done'; })
+    return state.tasks.filter(function (t) { return isTopLevel(t) && t.status === 'done'; })
       .map(function (t) { return M.evaluate(t, state.settings); })
       .sort(function (a, b) { return (b.doneAt || 0) - (a.doneAt || 0); });
   }
@@ -120,7 +124,9 @@
   function renderStats(active) {
     var today = active.filter(function (t) { return t.decision === 'today'; });
     var week = active.filter(function (t) { return t.decision === 'week'; });
-    var loadMin = today.reduce(function (s, t) { return s + (t.estMin || 0); }, 0);
+    var loadMin = today.reduce(function (s, t) {
+      return s + (t.estMin || 0) + M.subtaskStats(childrenOfTask(t.id)).leftMin;
+    }, 0);
     $('#stats').hidden = !active.length;
     $('#st-total').textContent = active.length;
     $('#st-today').textContent = today.length;
@@ -192,6 +198,15 @@
       });
       box.appendChild(undo);
     }
+    if (isTopLevel(t)) {
+      var kids = childrenOfTask(t.id);
+      var split = el('button', 'mini-btn', kids.length
+        ? ('▤ 子任务 ' + M.subtaskStats(kids).done + '/' + kids.length)
+        : '▤ 拆分');
+      split.title = '将大任务拆分为若干子任务';
+      split.addEventListener('click', function () { openSplit(t.id); });
+      box.appendChild(split);
+    }
     var ed = el('button', 'mini-btn', '编辑');
     ed.addEventListener('click', function () { openEdit(t.id); });
     box.appendChild(ed);
@@ -241,8 +256,139 @@
     head.appendChild(side);
 
     card.appendChild(head);
+    var sub = renderSubtree(t);
+    if (sub) { card.appendChild(sub); }
     card.appendChild(cardActions(t));
     return card;
+  }
+
+  /* ---------- 任务拆分 / 子任务 ---------- */
+  var STEP_NUMS = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮'];
+
+  /** 父任务的子任务区：进度条 + 折叠开关 + 子任务行（可递归） */
+  function renderSubtree(parent) {
+    var kids = childrenOfTask(parent.id);
+    if (!kids.length) { return null; }
+    var stats = M.subtaskStats(kids);
+
+    var wrap = el('div', 'parent-progress');
+    // 进度条
+    var track = el('div', 'prog-track');
+    var fill = el('div', 'prog-fill');
+    fill.style.width = (stats.total ? Math.round(stats.done / stats.total * 100) : 0) + '%';
+    track.appendChild(fill);
+    wrap.appendChild(track);
+
+    // 元信息 + 折叠开关
+    var meta = el('div', 'prog-meta');
+    var label = el('span', null, '');
+    var b = document.createElement('b');
+    b.textContent = stats.done + '/' + stats.total;
+    label.appendChild(b);
+    label.appendChild(document.createTextNode(' 子任务'));
+    if (parent.wf) { label.appendChild(el('span', 'prog-wf-tag', ' · 顺序工作流')); }
+    if (stats.blocked > 0) {
+      label.appendChild(el('span', 'chip warn', '⚠ ' + stats.blocked + ' 阻塞'));
+    }
+    if (parent.wf) {
+      var nx = M.nextOpenSubtask(kids);
+      if (nx) {
+        var ttl = nx.title.length > 14 ? nx.title.slice(0, 14) + '…' : nx.title;
+        label.appendChild(el('span', 'chip boost', '▶ 下一步：' + ttl));
+      }
+    }
+    meta.appendChild(label);
+    var toggle = el('button', 'toggle-sub', parent.subCollapsed ? '展开子任务 ▾' : '收起子任务 ▴');
+    toggle.addEventListener('click', function () {
+      parent.subCollapsed = !parent.subCollapsed;
+      save();
+      render();
+    });
+    meta.appendChild(toggle);
+    wrap.appendChild(meta);
+
+    // 子任务列表
+    var box = el('div', 'subtasks');
+    if (parent.subCollapsed) { box.hidden = true; }
+    kids.forEach(function (k) { box.appendChild(subtaskRow(parent, k)); });
+    wrap.appendChild(box);
+    return wrap;
+  }
+
+  function subtaskRow(parent, child) {
+    var kids = childrenOfTask(parent.id); // 用于序号与"当前步骤"
+    var idx = kids.indexOf(child);
+    var wf = !!parent.wf;
+    var done = child.status === 'done';
+    var blocked = child.status === 'blocked';
+    var nx = wf ? M.nextOpenSubtask(kids) : null;
+
+    var row = el('div', 'subtask-row' + (done ? ' done' : '') + (blocked ? ' blocked' : ''));
+    if (nx && nx.id === child.id) { row.classList.add('step-current'); }
+
+    var step = el('div', 'sub-step', wf ? (STEP_NUMS[idx] || (idx + 1)) : (done ? '✓' : '•'));
+    row.appendChild(step);
+
+    var main = el('div', 'sub-task-main');
+    var tt = el('div', 'sub-task-title', child.title);
+    main.appendChild(tt);
+
+    var metaBox = el('div', 'sub-task-meta');
+    if (child.estMin > 0) { metaBox.appendChild(el('span', 'chip', '⏱ ' + M.fmtDuration(child.estMin))); }
+    if (child.assignee) { metaBox.appendChild(el('span', 'chip', '委托：' + child.assignee)); }
+    if (done) { metaBox.appendChild(el('span', 'chip', '✓ 已完成')); }
+    else if (blocked) { metaBox.appendChild(el('span', 'chip note', '⚠ 等待他人/条件')); }
+    if (nx && nx.id === child.id) { metaBox.appendChild(el('span', 'step-current-tag', '当前步骤')); }
+    if (child.childrenCount) { metaBox.appendChild(el('span', 'chip', '含子任务 ' + child.childrenCount)); }
+    main.appendChild(metaBox);
+
+    // 递归：子任务本身也可拆分
+    var grand = childrenOfTask(child.id);
+    if (grand.length) {
+      var inner = el('div', 'subtasks nested');
+      grand.forEach(function (g) { inner.appendChild(subtaskRow(child, g)); });
+      main.appendChild(inner);
+    }
+    row.appendChild(main);
+
+    // 操作按钮
+    var acts = el('div', 'sub-actions');
+    if (!done) {
+      var ok = el('button', 'mini-btn ok', blocked ? '解阻' : '✓');
+      ok.title = blocked ? '解除阻塞' : '完成';
+      ok.addEventListener('click', function () {
+        if (blocked) { setStatus(child.id, 'todo'); } else { completeTask(child.id); }
+      });
+      acts.appendChild(ok);
+    } else {
+      var undo = el('button', 'mini-btn undo', '↩');
+      undo.title = '恢复待办';
+      undo.addEventListener('click', function () {
+        var x = byId(child.id);
+        if (x) { x.status = 'todo'; x.doneAt = null; save(); render(); }
+      });
+      acts.appendChild(undo);
+    }
+    var ed = el('button', 'mini-btn', '编辑');
+    ed.addEventListener('click', function () { openEdit(child.id); });
+    acts.appendChild(ed);
+    var up = el('button', 'mini-btn', '↑');
+    up.title = '上移（工作流顺序）';
+    up.addEventListener('click', function () { moveSubtask(child.id, -1); });
+    acts.appendChild(up);
+    var dn = el('button', 'mini-btn', '↓');
+    dn.title = '下移（工作流顺序）';
+    dn.addEventListener('click', function () { moveSubtask(child.id, 1); });
+    acts.appendChild(dn);
+    var ind = el('button', 'mini-btn', '独立');
+    ind.title = '提升为顶层任务（可独立排序、拆分为自己的子任务）';
+    ind.addEventListener('click', function () { neutralizeSubtask(child.id); });
+    acts.appendChild(ind);
+    var del = el('button', 'mini-btn warn', '删除');
+    del.addEventListener('click', function () { deleteTask(child.id); });
+    acts.appendChild(del);
+    row.appendChild(acts);
+    return row;
   }
 
   function render() {
@@ -281,10 +427,31 @@
   function completeTask(id) {
     var t = byId(id);
     if (!t) { return; }
+    // 顶层任务尚有未完成子任务时，提示先完成子任务（子任务全部完成时父任务自动完成）
+    if (!t.parentId && !t.subCompleteOK) {
+      var kids = childrenOfTask(id);
+      var st = M.subtaskStats(kids);
+      if (st.total && st.left > 0) {
+        window.alert('「' + t.title + '」还有 ' + st.left + ' 个子任务未完成。\n请先完成子任务，全部完成后父任务会自动完成。');
+        return;
+      }
+    }
     t.status = 'done';
     t.doneAt = Date.now();
+    // 子任务完成 → 若父任务的全部子任务均已完成，则父任务自动完成
+    if (t.parentId) {
+      var parent = byId(t.parentId);
+      if (parent && (parent.status === 'todo' || parent.status === 'doing')) {
+        var siblings = childrenOfTask(parent.id);
+        if (M.allSubtasksDone(siblings)) {
+          parent.status = 'done';
+          parent.doneAt = Date.now();
+        }
+      }
+    }
     save();
     render();
+    if (state.splitParentId === t.parentId) { renderSplitSheet(); }
   }
   function setStatus(id, status) {
     var t = byId(id);
@@ -295,10 +462,55 @@
   }
   function deleteTask(id) {
     var t = byId(id);
-    if (!t || !window.confirm('删除任务「' + t.title + '」？')) { return; }
-    state.tasks = state.tasks.filter(function (x) { return x.id !== id; });
+    if (!t) { return; }
+    var kids = childrenOfTask(id);
+    var msg = '删除任务「' + t.title + '」？';
+    if (kids.length) { msg += '\n将同时删除其 ' + kids.length + ' 个子任务。'; }
+    if (!window.confirm(msg)) { return; }
+    var doomed = {};
+    doomed[id] = true;
+    // 递归收集所有后代子任务
+    var again = true;
+    while (again) {
+      again = false;
+      state.tasks.forEach(function (x) {
+        if (doomed[x.parentId] && !doomed[x.id]) { doomed[x.id] = true; again = true; }
+      });
+    }
+    state.tasks = state.tasks.filter(function (x) { return !doomed[x.id]; });
+    if (state.splitParentId === id) { hideSheet('mask-split'); state.splitParentId = null; }
     save();
     render();
+  }
+  /** 移动子任务顺序（工作流：向上/向下一步） */
+  function moveSubtask(id, dir) {
+    var t = byId(id);
+    if (!t || t.parentId === undefined || t.parentId === null) { return; }
+    var parent = byId(t.parentId);
+    if (!parent) { return; }
+    parent.wf = 1; // 调整顺序意味着进入顺序工作流模式
+    var kids = childrenOfTask(parent.id);
+    var i = kids.indexOf(t);
+    var j = i + dir;
+    if (j < 0 || j >= kids.length) { return; }
+    var tmp = kids[i].order;
+    kids[i].order = kids[j].order;
+    kids[j].order = tmp;
+    save();
+    render();
+    if (state.splitParentId === parent.id) { renderSplitSheet(); }
+  }
+  /** 将子任务提升为独立顶层任务（"单独的"） */
+  function neutralizeSubtask(id) {
+    var t = byId(id);
+    if (!t) { return; }
+    if (t.parentId === undefined || t.parentId === null) { return; }
+    if (!window.confirm('将「' + t.title + '」提升为独立任务？它将按自己的 P 值参与全局排序。')) { return; }
+    t.parentId = null;
+    t.order = 0;
+    save();
+    render();
+    if (state.splitParentId) { renderSplitSheet(); }
   }
 
   /* ---------- 编辑表单 ---------- */
@@ -333,9 +545,17 @@
     $('#f-b').value = t ? t.b : 5;
     // 其他
     $('#f-title').value = t ? t.title : '';
+    // 预计耗时：先按原单位换算显示，避免"显示分钟/单位却选小时"导致每次保存被 ×60 放大
+    var EST_UNITS = [1, 60, 480]; // 分钟 / 小时 / 天(8h)
     var estMin = t ? (t.estMin || 0) : 0;
-    $('#f-est').value = estMin > 0 ? estMin : '';
-    $('#f-est-unit').value = estMin > 0 ? (estMin % 60 === 0 ? '60' : '1') : '60';
+    var estIdx = 1;
+    if (estMin > 0) {
+      if (estMin % 480 === 0) { estIdx = 2; }
+      else if (estMin % 60 === 0) { estIdx = 1; }
+      else { estIdx = 0; }
+    }
+    $('#f-est').value = estMin > 0 ? String(estMin / EST_UNITS[estIdx]) : '';
+    $('#f-est-unit').value = String(EST_UNITS[estIdx]);
     $('#f-status').value = t ? t.status : 'todo';
     $('#f-assignee').value = t ? (t.assignee || '') : '';
     $('#f-note').value = t ? (t.note || '') : '';
@@ -438,12 +658,96 @@
     render();
   }
 
+  /* ---------- 拆分抽屉 ---------- */
+  function openSplit(id) {
+    var t = byId(id);
+    if (!t) { return; }
+    state.splitParentId = id;
+    $('#sp-title').textContent = '拆分「' + t.title + '」';
+    renderSplitSheet();
+    showSheet('mask-split');
+  }
+
+  function renderSplitSheet() {
+    var parent = byId(state.splitParentId);
+    if (!parent) { return; }
+    var wf = !!parent.wf;
+    // 模式按钮
+    $$('#sp-mode button').forEach(function (b) {
+      b.classList.toggle('on', (b.dataset.wf === '1') === wf);
+    });
+    var hint = $('#sp-mode-hint');
+    hint.textContent = wf
+      ? '顺序工作流：子任务按 ①→②→③ 顺序执行，完成一步自动提示下一步；父任务在全部完成后自动完成。'
+      : '独立子任务：可并行、乱序完成；全部完成后父任务自动完成。';
+
+    var kids = childrenOfTask(parent.id);
+    var st = M.subtaskStats(kids);
+    $('#sp-progress').textContent = st.done + '/' + st.total;
+
+    var list = $('#sp-list');
+    list.textContent = '';
+    if (!kids.length) {
+      list.appendChild(el('div', 'split-empty',
+        '还没有子任务。在下方输入第一步要做什么，然后点「添加」。'));
+    }
+    kids.forEach(function (k) { list.appendChild(subtaskRow(parent, k)); });
+    $('#sp-new').value = '';
+    $('#sp-new-est').value = '';
+    $('#sp-new-assignee').value = '';
+  }
+
+  function addSubtask(e) {
+    e.preventDefault();
+    var parent = byId(state.splitParentId);
+    var title = $('#sp-new').value.trim();
+    if (!parent || !title) { alert('请填写子任务名称'); $('#sp-new').focus(); return; }
+    var kids = childrenOfTask(parent.id);
+    var estUnit = +$('#sp-new-est-unit').value;
+    var estRaw = parseFloat($('#sp-new-est').value);
+    var sub = {
+      id: uid(),
+      parentId: parent.id,
+      order: kids.length,               // 追加到末尾
+      title: title,
+      a: parent.a,
+      cMode: parent.cMode,
+      due: parent.cMode === 'due' ? parent.due : null,
+      cManual: parent.cManual != null ? parent.cManual : 10,
+      b: parent.b || 5,
+      estMin: estRaw > 0 ? Math.round(estRaw * estUnit) : 0,
+      status: 'todo',
+      assignee: $('#sp-new-assignee').value.trim(),
+      note: '',
+      createdAt: Date.now(),
+      doneAt: null
+    };
+    state.tasks.push(sub);
+    save();
+    render();
+    renderSplitSheet();
+    $('#sp-new').focus();
+  }
+
+  function setSplitMode(wf) {
+    var parent = byId(state.splitParentId);
+    if (!parent) { return; }
+    parent.wf = wf ? 1 : 0;
+    save();
+    render();
+    renderSplitSheet();
+  }
+
   /* ---------- 抽屉 ---------- */
   function showSheet(id) { $('#' + id).hidden = false; document.body.style.overflow = 'hidden'; }
-  function hideSheet(id) { $('#' + id).hidden = true; document.body.style.overflow = ''; }
+  function hideSheet(id) {
+    $('#' + id).hidden = true;
+    document.body.style.overflow = '';
+    if (id === 'mask-split') { state.splitParentId = null; }
+  }
   $$('.sheet-mask').forEach(function (mask) {
     mask.addEventListener('click', function (e) {
-      if (e.target === mask) { mask.hidden = true; document.body.style.overflow = ''; }
+      if (e.target === mask) { hideSheet(mask.id); }
     });
   });
   $$('[data-close]').forEach(function (b) {
@@ -519,13 +823,23 @@
   /* ---------- 示例数据 ---------- */
   function seedDemo() {
     var now = Date.now();
+    var wfParent = uid();
+    var indParent = uid();
+    var wfC0 = uid(), wfC1 = uid(), wfC2 = uid();
+    var indC0 = uid(), indC1 = uid(), indC2 = uid();
     state.tasks = [
       { id: uid(), title: '向领导汇报重点项目进展（领导在等）', a: 10, cMode: 'due', due: iso(1), cManual: 10, b: 7, estMin: 30, status: 'todo', assignee: '', note: '', createdAt: now - 80000, doneAt: null },
       { id: uid(), title: '总署来电要求的数据核对', a: 9, cMode: 'due', due: iso(3), cManual: 10, b: 4, estMin: 120, status: 'todo', assignee: '', note: '', createdAt: now - 70000, doneAt: null },
       { id: uid(), title: '上级临时抽查整改材料', a: 10, cMode: 'due', due: iso(-2), cManual: 10, b: 5, estMin: 90, status: 'todo', assignee: '', note: '已逾期', createdAt: now - 60000, doneAt: null },
-      { id: uid(), title: '撰写季度工作总结', a: 8, cMode: 'due', due: iso(20), cManual: 10, b: 8, estMin: 240, status: 'todo', assignee: '', note: '重要但不急 → 排期', createdAt: now - 50000, doneAt: null },
+      { id: wfParent, title: '撰写季度工作总结', a: 8, cMode: 'due', due: iso(20), cManual: 10, b: 8, estMin: 0, status: 'todo', assignee: '', note: '重要但不急 → 排期（示例：顺序工作流拆分）', createdAt: now - 50000, doneAt: null, wf: 1 },
+      { id: wfC0, parentId: wfParent, order: 0, title: '收集各科数据与素材', a: 8, cMode: 'due', due: iso(20), cManual: 10, b: 6, estMin: 60, status: 'todo', assignee: '', note: '', createdAt: now + 1, doneAt: null },
+      { id: wfC1, parentId: wfParent, order: 1, title: '撰写总结初稿', a: 8, cMode: 'due', due: iso(20), cManual: 10, b: 7, estMin: 120, status: 'todo', assignee: '', note: '', createdAt: now + 2, doneAt: null },
+      { id: wfC2, parentId: wfParent, order: 2, title: '处领导审定修改', a: 8, cMode: 'due', due: iso(20), cManual: 10, b: 5, estMin: 90, status: 'blocked', assignee: '处长', note: '等处领导时间', createdAt: now + 3, doneAt: null },
       { id: uid(), title: '科内例会材料准备', a: 3, cMode: 'manual', due: null, cManual: 2, b: 9, estMin: 60, status: 'todo', assignee: '小王', note: '不重要但急 → 可委托', createdAt: now - 40000, doneAt: null },
-      { id: uid(), title: '组织部门文化学习活动', a: 6, cMode: 'due', due: iso(45), cManual: 10, b: 6, estMin: 180, status: 'todo', assignee: '', note: '', createdAt: now - 30000, doneAt: null },
+      { id: indParent, title: '组织部门文化学习活动', a: 6, cMode: 'due', due: iso(45), cManual: 10, b: 6, estMin: 60, status: 'todo', assignee: '', note: '示例：独立子任务（可并行）', createdAt: now - 30000, doneAt: null, wf: 0 },
+      { id: indC0, parentId: indParent, order: 0, title: '收集活动意向报名', a: 6, cMode: 'due', due: iso(45), cManual: 10, b: 9, estMin: 30, status: 'done', assignee: '', note: '已收 12 人', createdAt: now + 10, doneAt: now - 5000 },
+      { id: indC1, parentId: indParent, order: 1, title: '预订活动场地', a: 6, cMode: 'due', due: iso(45), cManual: 10, b: 4, estMin: 60, status: 'todo', assignee: '小张', note: '', createdAt: now + 11, doneAt: null },
+      { id: indC2, parentId: indParent, order: 2, title: '准备学习材料', a: 6, cMode: 'due', due: iso(45), cManual: 10, b: 7, estMin: 90, status: 'todo', assignee: '', note: '', createdAt: now + 12, doneAt: null },
       { id: uid(), title: '帮同事整理历史文档', a: 1, cMode: 'manual', due: null, cManual: 10, b: 10, estMin: 480, status: 'todo', assignee: '', note: '双低 → 不做/删除', createdAt: now - 20000, doneAt: null },
       { id: uid(), title: '新技术调研做原型', a: 7, cMode: 'due', due: iso(10), cManual: 10, b: 2, estMin: 300, status: 'blocked', assignee: '', note: '等供应商开通账号', createdAt: now - 10000, doneAt: null }
     ];
@@ -618,6 +932,12 @@
     $('#f-due').addEventListener('change', updatePreview);
     $$('#f-cmode button').forEach(function (b) {
       b.addEventListener('click', function () { setCmodeUI(b.dataset.cmode); updatePreview(); });
+    });
+
+    // 拆分抽屉
+    $('#form-split-add').addEventListener('submit', addSubtask);
+    $$('#sp-mode button').forEach(function (b) {
+      b.addEventListener('click', function () { setSplitMode(b.dataset.wf === '1'); });
     });
 
     $('#s-tau').addEventListener('input', saveSettingsFromForm);
