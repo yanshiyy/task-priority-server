@@ -369,3 +369,52 @@ input[type=range] { width: 100%; accent-color: var(--brand); height: 30px; }
 
 /* 防御：置于末尾确保任何 display 规则都不会遮蔽 hidden（jsdom 按出现顺序解析 !important） */
 [hidden] { display: none !important; }
+
+/* ============ 任务委派 ============ */
+.bell-wrap { position: relative; display: inline-flex; }
+.bell-badge {
+  position: absolute; top: -6px; right: -8px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--today); color: #fff;
+  font-size: 10px; line-height: 16px; text-align: center; font-weight: 700;
+}
+.deleg-list { display: flex; flex-direction: column; gap: 8px; max-height: 32vh; overflow-y: auto; }
+.deleg-item {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 6px;
+}
+.deleg-item.unread { border-color: var(--brand); background: var(--brand-soft); }
+.deleg-item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.deleg-item-title { font-weight: 600; word-break: break-all; }
+.deleg-item-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.deleg-item-meta .chip { font-size: 10px; padding: 1px 7px; }
+.deleg-item-note { font-size: 12px; color: var(--ink-2); word-break: break-all; }
+.deleg-item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 委派任务卡片（被委派人视角） */
+.delegated-section { margin-bottom: 4px; }
+.delegated-head {
+  font-size: 12px; font-weight: 700; color: var(--schedule);
+  margin: 2px 0 8px; display: flex; align-items: center; gap: 6px;
+}
+.chip.from { color: var(--schedule); border-color: currentColor; font-weight: 600; }
+.chip.redeleg { color: #7c3aed; border-color: currentColor; }
+.card.delegated { border-style: dashed; }
+.card.delegated::before { background: var(--schedule); }
+
+/* 委派徽章（委派人视角：原任务已委派） */
+.chip.delegated { color: var(--schedule); border-color: currentColor; font-weight: 600; }
+.deleg-task-summary {
+  background: var(--bg); border-radius: 10px; padding: 8px 12px;
+  font-size: 13px; font-weight: 600;
+}
+.deleg-feedback-box {
+  background: var(--bg); border-radius: 10px; padding: 10px 12px;
+  font-size: 13px; display: flex; flex-direction: column; gap: 4px;
+  margin-top: 6px;
+}
+.deleg-feedback-box b { color: var(--brand); }
+#dlg-busy-hint.warn-box {
+  display: block; background: #fef3c7; color: #92400e;
+  border-radius: 10px; padding: 10px 12px; font-size: 12px;
+}

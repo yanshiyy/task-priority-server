@@ -37,6 +37,9 @@
       </div>
       <div class="topbar-right">
         <span class="user-tag" id="user-tag"></span>
+        <button id="btn-delegations" class="icon-btn" title="委派中心">
+          <span class="bell-wrap">⇄<b class="bell-badge" id="deleg-badge" hidden>0</b></span>
+        </button>
         <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
         <button id="btn-logout" class="icon-btn" title="退出登录">⎋</button>
       </div>
@@ -198,6 +201,147 @@
         <button type="button" class="btn primary grow" data-close="mask-split">完成</button>
       </div>
     </div>
+  </div>
+
+  <!-- 委派中心抽屉 -->
+  <div class="sheet-mask" id="mask-delegations" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>委派中心</h2>
+        <button type="button" class="icon-btn" data-close="mask-delegations">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">我委派的（<b class="val" id="dlg-mine-cnt">0</b>）</span>
+          <div id="dlg-mine" class="deleg-list"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">委派给我的（<b class="val" id="dlg-assigned-cnt">0</b>）</span>
+          <div id="dlg-assigned" class="deleg-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 发起委派抽屉 -->
+  <div class="sheet-mask" id="mask-delegate" hidden>
+    <form class="sheet" id="form-delegate">
+      <div class="sheet-head">
+        <h2 id="dlg-title">委派任务</h2>
+        <button type="button" class="icon-btn" data-close="mask-delegate">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">任务</span>
+          <div class="deleg-task-summary" id="dlg-task-summary"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">委派给 *</span>
+          <select id="dlg-to"></select>
+        </div>
+        <div class="field">
+          <span class="field-label">委派说明（可选）</span>
+          <textarea id="dlg-note" rows="2" maxlength="200" placeholder="说明背景、要求、截止时间等"></textarea>
+        </div>
+        <div class="hint" id="dlg-busy-hint"></div>
+        <div class="score-preview" id="dlg-preview" hidden>
+          <span id="dlg-preview-text">委派后原任务将锁定为"已委派"，对方完成后需您确认。</span>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn" data-close="mask-delegate">取消</button>
+        <button type="submit" class="btn primary grow">确认委派</button>
+      </div>
+      <input type="hidden" id="dlg-task-id">
+    </form>
+  </div>
+
+  <!-- 反馈抽屉（被委派人） -->
+  <div class="sheet-mask" id="mask-feedback" hidden>
+    <form class="sheet" id="form-feedback">
+      <div class="sheet-head">
+        <h2>执行反馈</h2>
+        <button type="button" class="icon-btn" data-close="mask-feedback">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">任务：<b id="fb-task-title"></b></span>
+        </div>
+        <div class="field">
+          <span class="field-label">执行情况 *</span>
+          <div class="seg" id="fb-status">
+            <button type="button" data-fb="doing">▶ 进行中</button>
+            <button type="button" data-fb="blocked">⚠ 遇阻/需帮助</button>
+            <button type="button" data-fb="done" class="on">✓ 已完成</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">说明（可选）</span>
+          <textarea id="fb-note" rows="3" maxlength="200" placeholder="进度、困难、完成情况说明"></textarea>
+        </div>
+        <div class="hint">提交后委派人将收到通知，并需对执行情况进行确认。</div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn" data-close="mask-feedback">取消</button>
+        <button type="submit" class="btn primary grow">提交反馈</button>
+      </div>
+      <input type="hidden" id="fb-delegation-id">
+    </form>
+  </div>
+
+  <!-- 确认/退回抽屉（委派人） -->
+  <div class="sheet-mask" id="mask-confirm" hidden>
+    <form class="sheet" id="form-confirm">
+      <div class="sheet-head">
+        <h2>委派确认</h2>
+        <button type="button" class="icon-btn" data-close="mask-confirm">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">任务：<b id="cf-task-title"></b></span>
+          <div class="deleg-feedback-box" id="cf-feedback-box"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">处理意见（可选）</span>
+          <textarea id="cf-note" rows="2" maxlength="200" placeholder="给被委派人的意见"></textarea>
+        </div>
+        <div class="hint">确认完成 → 原任务自动标记完成；退回重做 → 对方可继续处理并再次反馈。</div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn warn" id="cf-reject">退回重做</button>
+        <button type="submit" class="btn primary grow">✓ 确认完成</button>
+      </div>
+      <input type="hidden" id="cf-delegation-id">
+    </form>
+  </div>
+
+  <!-- 转派抽屉（被委派人） -->
+  <div class="sheet-mask" id="mask-redelegate" hidden>
+    <form class="sheet" id="form-redelegate">
+      <div class="sheet-head">
+        <h2>转派任务</h2>
+        <button type="button" class="icon-btn" data-close="mask-redelegate">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <span class="field-label">任务：<b id="rd-task-title"></b></span>
+          <div class="hint">将委派任务转给他人处理，原始来源人保持不变。</div>
+        </div>
+        <div class="field">
+          <span class="field-label">转派给 *</span>
+          <select id="rd-to"></select>
+        </div>
+        <div class="field">
+          <span class="field-label">转派说明（可选）</span>
+          <textarea id="rd-note" rows="2" maxlength="200" placeholder="说明"></textarea>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" class="btn" data-close="mask-redelegate">取消</button>
+        <button type="submit" class="btn primary grow">确认转派</button>
+      </div>
+      <input type="hidden" id="rd-delegation-id">
+    </form>
   </div>
 
   <!-- 设置抽屉 -->

@@ -17,7 +17,17 @@
     splitParentId: null,
     username: '',
     rev: 0,
-    saveTimer: null
+    saveTimer: null,
+    // 委派
+    delegated: [],          // 委派给我的任务（服务端合成）
+    delegationMine: [],     // 我发起的委派
+    delegationAssigned: [], // 委派给我的委派
+    alerts: { newAssigned: 0, newFeedback: 0 },
+    dlgTaskId: null,        // 发起委派的任务 id
+    fbDelegationId: null,
+    cfDelegationId: null,
+    rdDelegationId: null,
+    pollTimer: null
   };
 
   function token() {
@@ -72,9 +82,29 @@
       state.tasks = Array.isArray(r.data.tasks) ? r.data.tasks : [];
       state.rev = r.data.rev || 0;
       state.username = r.data.username || state.username;
+      state.delegated = Array.isArray(r.data.delegated) ? r.data.delegated : [];
+      if (r.data.alerts) { state.alerts = r.data.alerts; }
       $('#user-tag').textContent = state.username ? ('👤 ' + state.username) : '';
       render();
+      renderBell();
     });
+  }
+  function fetchDelegations() {
+    return api('GET', '/api/delegations').then(function (r) {
+      if (!r.ok) { return; }
+      state.delegationMine = r.data.mine || [];
+      state.delegationAssigned = r.data.assigned || [];
+      if (r.data.alerts) { state.alerts = r.data.alerts; }
+      renderBell();
+      // 若委派中心打开则刷新
+      if (!$('#mask-delegations').hidden) { renderDelegationCenter(); }
+    });
+  }
+  function renderBell() {
+    var n = (state.alerts.newAssigned || 0) + (state.alerts.newFeedback || 0);
+    var badge = $('#deleg-badge');
+    badge.hidden = n === 0;
+    badge.textContent = n > 99 ? '99+' : String(n);
   }
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -170,6 +200,26 @@
 
   function cardActions(t) {
     var box = el('div', 'card-actions');
+    // 已委派原任务：锁定，只显示委派相关操作
+    if (t.delegated && t.status !== 'done') {
+      var d = t.delegated;
+      var st = d.status;
+      var vBtn = el('button', 'mini-btn', st === 'active' ? ('⇄ 已委派给 ' + d.to) : (st === 'feedback' ? '⇄ 待确认（有新反馈）' : '⇄ 查看委派'));
+      vBtn.addEventListener('click', function () { openDelegationCenter(); });
+      box.appendChild(vBtn);
+      if (st === 'active') {
+        var cancel = el('button', 'mini-btn warn', '撤回');
+        cancel.addEventListener('click', function () { cancelDelegation(t.id); });
+        box.appendChild(cancel);
+      }
+      var ed2 = el('button', 'mini-btn', '编辑');
+      ed2.addEventListener('click', function () { openEdit(t.id); });
+      box.appendChild(ed2);
+      var del2 = el('button', 'mini-btn warn', '删除');
+      del2.addEventListener('click', function () { deleteTask(t.id); });
+      box.appendChild(del2);
+      return box;
+    }
     if (t.status === 'todo' || t.status === 'doing') {
       var ok = el('button', 'mini-btn ok', '✓ 完成');
       ok.addEventListener('click', function () { completeTask(t.id); });
@@ -206,6 +256,10 @@
       split.title = '将大任务拆分为若干子任务';
       split.addEventListener('click', function () { openSplit(t.id); });
       box.appendChild(split);
+      var dlg = el('button', 'mini-btn', '⇄ 委派');
+      dlg.title = '将任务委派给其他用户';
+      dlg.addEventListener('click', function () { openDelegate(t.id); });
+      box.appendChild(dlg);
     }
     var ed = el('button', 'mini-btn', '编辑');
     ed.addEventListener('click', function () { openEdit(t.id); });
@@ -237,6 +291,14 @@
         dl < 0 ? ('已逾期 ' + (-dl) + ' 天') : (dl === 0 ? '今天到期' : '剩 ' + dl + ' 天')));
     }
     if (t.easyBoost) { chips.appendChild(el('span', 'chip boost', '⏫ 先易后难')); }
+    if (t.delegated && t.status !== 'done') {
+      var dlabel = t.delegated.status === 'active' ? ('已委派给 ' + t.delegated.to)
+        : (t.delegated.status === 'feedback' ? ('已委派给 ' + t.delegated.to + ' · 待确认') : '已委派 · ' + t.delegated.status);
+      chips.appendChild(el('span', 'chip delegated', '⇄ ' + dlabel));
+    }
+    if (t.delegated && t.status === 'done' && t.delegated.status === 'confirmed') {
+      chips.appendChild(el('span', 'chip delegated', '⇄ 委派已确认完成'));
+    }
     if (t.estMin > 0) { chips.appendChild(el('span', 'chip', '⏱ ' + M.fmtDuration(t.estMin))); }
     if (t.assignee) { chips.appendChild(el('span', 'chip', '委托：' + t.assignee)); }
     if (t.status === 'doing') { chips.appendChild(el('span', 'chip warn', '进行中')); }
@@ -406,11 +468,21 @@
     else if (state.filter === 'done') { shown = done; }
     else { shown = active.filter(function (t) { return t.decision === state.filter; }); }
 
+    // 委派给我的任务区（仅"全部"标签展示，带来源徽章）
+    if (state.filter === 'all' && state.delegated.length > 0) {
+      var sec = el('section', 'delegated-section');
+      sec.appendChild(el('div', 'delegated-head', '⇄ 委派给我的任务（' + state.delegated.length + '）'));
+      state.delegated.forEach(function (d) {
+        sec.appendChild(delegatedCard(d));
+      });
+      list.appendChild(sec);
+    }
+
     shown.forEach(function (t, i) {
       list.appendChild(taskCard(t, i + 1));
     });
     var empty = $('#empty');
-    if (shown.length > 0) {
+    if (shown.length > 0 || (state.filter === 'all' && state.delegated.length > 0)) {
       empty.hidden = true;
     } else if (active.length > 0) {
       empty.hidden = false;
@@ -421,6 +493,34 @@
       empty.querySelector('p').textContent = '暂无任务';
       empty.querySelector('button').hidden = false;
     }
+  }
+
+  /** 委派给我的任务卡片（来源人 + 反馈/转派入口） */
+  function delegatedCard(d) {
+    var card = el('article', 'card delegated');
+    card.style.setProperty('--dc', '#2563eb');
+    var head = el('div', 'card-head');
+    var rk = el('div', 'rank', '⇄');
+    head.appendChild(rk);
+    var main = el('div', 'card-main');
+    main.appendChild(el('div', 'card-title', d.title));
+    var chips = el('div', 'card-meta');
+    var from = d.reDelegatedBy ? ('来源：' + d.delegatedFrom + '（经 ' + d.reDelegatedBy + ' 转派）') : ('来源：' + d.delegatedFrom);
+    chips.appendChild(el('span', 'chip from', from));
+    if (d.estMin > 0) { chips.appendChild(el('span', 'chip', '⏱ ' + M.fmtDuration(d.estMin))); }
+    if (d.note) { chips.appendChild(el('span', 'chip', '说明：' + d.note)); }
+    main.appendChild(chips);
+    head.appendChild(main);
+    card.appendChild(head);
+    var acts = el('div', 'card-actions');
+    var fb = el('button', 'mini-btn ok', '📤 反馈');
+    fb.addEventListener('click', function () { openFeedback(d.delegationId); });
+    acts.appendChild(fb);
+    var rd = el('button', 'mini-btn', '⇄ 转派');
+    rd.addEventListener('click', function () { openRedelegate(d.delegationId); });
+    acts.appendChild(rd);
+    card.appendChild(acts);
+    return card;
   }
 
   /* ---------- 任务操作 ---------- */
@@ -846,6 +946,261 @@
     save();
   }
 
+  /* ---------- 任务委派 ---------- */
+  var dlgUsers = [];   // 可委派用户列表缓存
+
+  function loadUsers() {
+    return api('GET', '/api/users').then(function (r) {
+      if (r.ok) { dlgUsers = r.data.users || []; }
+      return dlgUsers;
+    });
+  }
+  function fillUserSelect(sel) {
+    sel.textContent = '';
+    if (!dlgUsers.length) {
+      var o0 = document.createElement('option');
+      o0.value = '';
+      o0.textContent = '（暂无可委派用户）';
+      sel.appendChild(o0);
+      return;
+    }
+    dlgUsers.forEach(function (u) {
+      var o = document.createElement('option');
+      o.value = u;
+      o.textContent = u;
+      sel.appendChild(o);
+    });
+  }
+
+  /** 发起委派抽屉 */
+  function openDelegate(taskId) {
+    var t = byId(taskId);
+    if (!t) { return; }
+    state.dlgTaskId = taskId;
+    var summary = $('#dlg-task-summary');
+    summary.textContent = t.title + '　（P=' + t.P + ' · ' + (t.decision === undefined ? '' : decisionMeta(t.decision).label) + '）';
+    $('#dlg-task-id').value = taskId;
+    $('#dlg-note').value = '';
+    loadUsers().then(function () {
+      fillUserSelect($('#dlg-to'));
+    });
+    // 任务积压提示：今天必做 ≥ 3
+    var todayCnt = evaluated().filter(function (x) { return x.decision === 'today'; }).length;
+    var hint = $('#dlg-busy-hint');
+    hint.hidden = todayCnt < 3;
+    hint.className = 'hint';
+    if (todayCnt >= 3) {
+      hint.className = 'warn-box';
+      hint.textContent = '⚠ 您当前有 ' + todayCnt + ' 个"今天必做"任务积压，是否考虑委派部分任务以减轻负担？（仍可继续委派）';
+    }
+    showSheet('mask-delegate');
+    $('#dlg-to').focus();
+  }
+
+  function submitDelegate(e) {
+    e.preventDefault();
+    var to = $('#dlg-to').value;
+    var taskId = $('#dlg-task-id').value;
+    if (!to) { alert('请选择委派对象'); return; }
+    api('POST', '/api/delegations', { taskId: taskId, toUsername: to, note: $('#dlg-note').value.trim() })
+      .then(function (r) {
+        if (!r.ok) { alert(r.data.error || '委派失败'); return; }
+        if (r.data.rev != null) { state.rev = r.data.rev; }
+        hideSheet('mask-delegate');
+        alert('已委派给 ' + to);
+        fetchTasks();
+        fetchDelegations();
+      });
+  }
+
+  /** 反馈抽屉（被委派人） */
+  function openFeedback(delegationId) {
+    state.fbDelegationId = delegationId;
+    var d = findDelegation(delegationId);
+    $('#fb-task-title').textContent = d ? d.sourceTitle : '';
+    $('#fb-note').value = '';
+    setFbStatus('done');
+    showSheet('mask-feedback');
+  }
+  function setFbStatus(s) {
+    $$('#fb-status button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.fb === s);
+    });
+  }
+  function submitFeedback(e) {
+    e.preventDefault();
+    var status = null;
+    $$('#fb-status button').forEach(function (b) { if (b.classList.contains('on')) { status = b.dataset.fb; } });
+    api('POST', '/api/delegations/' + state.fbDelegationId + '/feedback', {
+      status: status, note: $('#fb-note').value.trim()
+    }).then(function (r) {
+      if (!r.ok) { alert(r.data.error || '反馈失败'); return; }
+      hideSheet('mask-feedback');
+      alert(status === 'done' ? '已提交完成反馈，等待委派人确认。' : '反馈已提交。');
+      fetchTasks();
+      fetchDelegations();
+    });
+  }
+
+  /** 确认抽屉（委派人） */
+  function openConfirm(delegationId) {
+    state.cfDelegationId = delegationId;
+    var d = findDelegation(delegationId);
+    $('#cf-task-title').textContent = d ? d.sourceTitle : '';
+    $('#cf-note').value = '';
+    var box = $('#cf-feedback-box');
+    box.textContent = '';
+    if (d) {
+      var who = d.feedbackFrom || d.to;
+      var stLabel = d.feedbackStatus === 'done' ? '✓ 已完成' : (d.feedbackStatus === 'blocked' ? '⚠ 遇阻/需帮助' : '▶ 进行中');
+      box.appendChild(el('div', null, ''));
+      var line = el('div', null, '');
+      line.appendChild(el('b', null, who + ' 反馈：'));
+      line.appendChild(document.createTextNode(stLabel));
+      box.appendChild(line);
+      if (d.feedbackNote) { box.appendChild(el('div', 'deleg-item-note', '「' + d.feedbackNote + '」')); }
+      box.appendChild(el('div', 'hint', '反馈时间：' + (d.feedbackAt ? new Date(d.feedbackAt).toLocaleString() : '—')));
+    }
+    showSheet('mask-confirm');
+  }
+  function submitConfirm(e) {
+    e.preventDefault();
+    api('POST', '/api/delegations/' + state.cfDelegationId + '/confirm', {
+      action: 'confirm', note: $('#cf-note').value.trim()
+    }).then(function (r) {
+      if (!r.ok) { alert(r.data.error || '确认失败'); return; }
+      hideSheet('mask-confirm');
+      alert('已确认完成，原任务已自动标记完成。');
+      fetchTasks();
+      fetchDelegations();
+    });
+  }
+  function submitReject() {
+    api('POST', '/api/delegations/' + state.cfDelegationId + '/confirm', {
+      action: 'reject', note: $('#cf-note').value.trim()
+    }).then(function (r) {
+      if (!r.ok) { alert(r.data.error || '退回失败'); return; }
+      hideSheet('mask-confirm');
+      alert('已退回重做，被委派人可继续处理并再次反馈。');
+      fetchTasks();
+      fetchDelegations();
+    });
+  }
+
+  /** 转派抽屉（被委派人） */
+  function openRedelegate(delegationId) {
+    state.rdDelegationId = delegationId;
+    var d = findDelegation(delegationId);
+    $('#rd-task-title').textContent = d ? d.sourceTitle : '';
+    $('#rd-note').value = '';
+    loadUsers().then(function () { fillUserSelect($('#rd-to')); });
+    showSheet('mask-redelegate');
+  }
+  function submitRedelegate(e) {
+    e.preventDefault();
+    var to = $('#rd-to').value;
+    if (!to) { alert('请选择转派对象'); return; }
+    api('POST', '/api/delegations/' + state.rdDelegationId + '/redelegate', {
+      toUsername: to, note: $('#rd-note').value.trim()
+    }).then(function (r) {
+      if (!r.ok) { alert(r.data.error || '转派失败'); return; }
+      hideSheet('mask-redelegate');
+      alert('已转派给 ' + to);
+      fetchTasks();
+      fetchDelegations();
+    });
+  }
+
+  /** 委派中心抽屉 */
+  function openDelegationCenter() {
+    fetchDelegations().then(function () {
+      renderDelegationCenter();
+      showSheet('mask-delegations');
+    });
+  }
+  function findDelegation(id) {
+    var all = state.delegationMine.concat(state.delegationAssigned);
+    for (var i = 0; i < all.length; i++) { if (all[i].id === id) { return all[i]; } }
+    return null;
+  }
+  function dlgStatusLabel(st) {
+    return { active: '待执行', feedback: '已反馈·待确认', confirmed: '已确认完成', rejected: '已退回重做', cancelled: '已撤回', 're-delegated': '已转派' }[st] || st;
+  }
+  function renderDelegationCenter() {
+    var mineBox = $('#dlg-mine');
+    mineBox.textContent = '';
+    $('#dlg-mine-cnt').textContent = state.delegationMine.length;
+    state.delegationMine.forEach(function (d) {
+      mineBox.appendChild(delegItem(d, true));
+    });
+    if (!state.delegationMine.length) {
+      mineBox.appendChild(el('div', 'split-empty', '暂无我发起的委派。'));
+    }
+    var assBox = $('#dlg-assigned');
+    assBox.textContent = '';
+    $('#dlg-assigned-cnt').textContent = state.delegationAssigned.length;
+    state.delegationAssigned.forEach(function (d) {
+      assBox.appendChild(delegItem(d, false));
+    });
+    if (!state.delegationAssigned.length) {
+      assBox.appendChild(el('div', 'split-empty', '暂无委派给我的任务。'));
+    }
+  }
+  function delegItem(d, isMine) {
+    var item = el('div', 'deleg-item' + ((isMine && d.status === 'feedback') || (!isMine && (d.status === 'active' || d.status === 'rejected')) ? ' unread' : ''));
+    var head = el('div', 'deleg-item-head');
+    head.appendChild(el('span', 'deleg-item-title', d.sourceTitle));
+    head.appendChild(el('span', 'chip', dlgStatusLabel(d.status)));
+    item.appendChild(head);
+    var meta = el('div', 'deleg-item-meta');
+    meta.appendChild(el('span', 'chip', isMine ? ('→ ' + d.to) : ('来源：' + d.rootFrom + (d.reDelegatedBy ? '（经' + d.reDelegatedBy + '转派）' : ''))));
+    if (d.status === 'feedback' && d.feedbackStatus) {
+      meta.appendChild(el('span', 'chip warn', '反馈：' + (d.feedbackStatus === 'done' ? '已完成' : d.feedbackStatus === 'blocked' ? '遇阻' : '进行中')));
+    }
+    item.appendChild(meta);
+    if (d.note) { item.appendChild(el('div', 'deleg-item-note', '说明：' + d.note)); }
+    if (d.feedbackNote) { item.appendChild(el('div', 'deleg-item-note', '反馈：' + d.feedbackNote)); }
+    var acts = el('div', 'deleg-item-actions');
+    if (isMine) {
+      if (d.status === 'feedback') {
+        var see = el('button', 'mini-btn', '查看反馈');
+        see.addEventListener('click', function () { openConfirm(d.id); });
+        acts.appendChild(see);
+      } else if (d.status === 'active') {
+        var cc = el('button', 'mini-btn warn', '撤回');
+        cc.addEventListener('click', function () { cancelDelegationById(d.id); });
+        acts.appendChild(cc);
+      }
+    } else {
+      if (d.status === 'active' || d.status === 'rejected') {
+        var fb2 = el('button', 'mini-btn ok', '反馈');
+        fb2.addEventListener('click', function () { openFeedback(d.id); });
+        acts.appendChild(fb2);
+        var rd2 = el('button', 'mini-btn', '转派');
+        rd2.addEventListener('click', function () { openRedelegate(d.id); });
+        acts.appendChild(rd2);
+      }
+    }
+    if (acts.childNodes.length) { item.appendChild(acts); }
+    return item;
+  }
+
+  /** 撤回委派（原任务卡片） */
+  function cancelDelegation(taskId) {
+    var t = byId(taskId);
+    if (!t || !t.delegated) { return; }
+    cancelDelegationById(t.delegated.delegationId);
+  }
+  function cancelDelegationById(id) {
+    if (!window.confirm('撤回该委派？原任务将恢复可编辑，对方收到后任务解除。')) { return; }
+    api('POST', '/api/delegations/' + id + '/cancel').then(function (r) {
+      if (!r.ok) { alert(r.data.error || '撤回失败'); return; }
+      alert('已撤回委派。');
+      fetchTasks();
+      fetchDelegations();
+    });
+  }
+
   /* ---------- 账户 / 登录 ---------- */
   function showLogin() {
     $('#login-view').hidden = false;
@@ -883,6 +1238,11 @@
       setToken('');
       state.tasks = [];
       state.username = '';
+      state.delegated = [];
+      state.delegationMine = [];
+      state.delegationAssigned = [];
+      state.alerts = { newAssigned: 0, newFeedback: 0 };
+      renderBell();
       render();
       showLogin();
     });
@@ -939,6 +1299,22 @@
     $$('#sp-mode button').forEach(function (b) {
       b.addEventListener('click', function () { setSplitMode(b.dataset.wf === '1'); });
     });
+
+    // 委派
+    $('#btn-delegations').addEventListener('click', openDelegationCenter);
+    $('#form-delegate').addEventListener('submit', submitDelegate);
+    $('#form-feedback').addEventListener('submit', submitFeedback);
+    $$('#fb-status button').forEach(function (b) {
+      b.addEventListener('click', function () { setFbStatus(b.dataset.fb); });
+    });
+    $('#form-confirm').addEventListener('submit', submitConfirm);
+    $('#cf-reject').addEventListener('click', submitReject);
+    $('#form-redelegate').addEventListener('submit', submitRedelegate);
+
+    // 委派角标轮询（30s）
+    state.pollTimer = setInterval(function () {
+      if (token()) { fetchDelegations(); }
+    }, 30000);
 
     $('#s-tau').addEventListener('input', saveSettingsFromForm);
     $('#s-must').addEventListener('change', saveSettingsFromForm);
